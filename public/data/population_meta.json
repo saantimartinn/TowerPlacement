@@ -1,0 +1,16 @@
+{
+  "bounds": [
+    [
+      38.824166847,
+      1.156665942
+    ],
+    [
+      39.119166846,
+      1.650832607
+    ]
+  ],
+  "total_population": 165409.67709381157,
+  "radius_m": 2000,
+  "cell_count": 67515,
+  "note": "population_points entries are [lat, lng, population]"
+}
