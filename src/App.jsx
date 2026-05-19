@@ -315,7 +315,71 @@ function PlacesLayer({ places }) {
   );
 }
 
-function ResultsPanel({ myParticipant, totalPopulation }) {
+function GlobalLeaderboard({ participants, totalPopulation, phase, title = 'Global ranking' }) {
+  const rows = useMemo(() => {
+    return participants
+      .map((participant) => {
+        const result = participant.phases?.[String(phase)];
+
+        if (!result) return null;
+
+        const pctTotal =
+          totalPopulation && result.population
+            ? (result.population / totalPopulation) * 100
+            : 0;
+
+        return {
+          id: participant.id,
+          name: participant.name || 'Anonymous',
+          population: result.population || 0,
+          pctTotal,
+        };
+      })
+      .filter(Boolean)
+      .sort((a, b) => b.population - a.population);
+  }, [participants, phase, totalPopulation]);
+
+  return (
+    <section className="global-leaderboard">
+      <div className="global-leaderboard-header">
+        <p className="eyebrow">{title}</p>
+        <h3>Phase {phase}</h3>
+      </div>
+
+      <div className="leaderboard-table-wrap">
+        <table className="leaderboard-table">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Player</th>
+              <th>Population</th>
+              <th>%</th>
+            </tr>
+          </thead>
+
+          <tbody>
+            {rows.map((row, index) => (
+              <tr key={row.id}>
+                <td>{index + 1}</td>
+                <td>{row.name}</td>
+                <td>{formatPopulation(row.population)}</td>
+                <td>{formatShare(row.pctTotal)}</td>
+              </tr>
+            ))}
+
+            {!rows.length && (
+              <tr>
+                <td colSpan="4">No submissions yet.</td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  );
+}
+
+function ResultsPanel({ myParticipant, participants, totalPopulation }) {
   const phases = myParticipant?.phases || {};
 
   const p1 = phases['1']?.population || 0;
@@ -391,6 +455,13 @@ function ResultsPanel({ myParticipant, totalPopulation }) {
       <p className="results-note">
         Coverage overlaps are counted only once. The score is the population inside the union of the five 2 km coverage areas.
       </p>
+
+      <GlobalLeaderboard
+        participants={participants}
+        totalPopulation={totalPopulation}
+        phase={3}
+        title="Final global ranking"
+      />
     </section>
   );
 }
@@ -524,13 +595,15 @@ function HostDashboard({
   );
 }
 
-function WaitingPanel({ title, body }) {
+function WaitingPanel({ title, body, children }) {
   return (
     <div className="modal-backdrop waiting-backdrop" role="dialog" aria-modal="true">
       <div className="modal-card waiting-card">
         <p className="eyebrow">Please wait</p>
         <h2>{title}</h2>
         <p>{body}</p>
+
+        {children}
       </div>
     </div>
   );
@@ -633,6 +706,11 @@ function PopulationLegend({ visible }) {
   return (
     <div className="population-legend">
       <div className="population-legend-title">Population density</div>
+
+      <div className="no-population-row">
+        <span className="no-population-swatch" />
+        <span>No population / no data</span>
+      </div>
 
       <div className="population-scale" />
 
@@ -1189,6 +1267,7 @@ export default function App() {
       {showResults && (
         <ResultsPanel
           myParticipant={myParticipant}
+          participants={participants}
           totalPopulation={data.populationMeta.total_population}
         />
       )}
@@ -1197,7 +1276,14 @@ export default function App() {
         <WaitingPanel
           title={`Phase ${phase} submitted`}
           body="Your result has been saved. The next phase will unlock automatically when the host continues."
-        />
+        >
+          <GlobalLeaderboard
+            participants={participants}
+            totalPopulation={data.populationMeta.total_population}
+            phase={phase}
+            title="Current global ranking"
+          />
+        </WaitingPanel>
       )}
 
       {showHelp && !showResults && !hasSubmittedCurrentPhase && (
