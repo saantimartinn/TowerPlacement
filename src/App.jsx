@@ -451,11 +451,6 @@ function ResultsPanel({ myParticipant, participants, totalPopulation }) {
           Increase over Phase 2: {formatPercent(percentIncrease(row3.population, row2.population))}
         </small>
       </div>
-
-      <p className="results-note">
-        Coverage overlaps are counted only once. The score is the population inside the union of the five 2 km coverage areas.
-      </p>
-
       <GlobalLeaderboard
         participants={participants}
         totalPopulation={totalPopulation}
@@ -741,7 +736,7 @@ export default function App() {
 
   const previousPhaseRef = useRef(1);
 
-  const isHost = playerName.trim().toLowerCase() === 'santi';
+  const isHost = playerName.trim().toLowerCase() === 'santi123';
 
   const gameRef = useMemo(() => doc(db, 'games', GAME_ID), []);
   const participantRef = useMemo(
