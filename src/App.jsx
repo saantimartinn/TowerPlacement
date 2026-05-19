@@ -12,10 +12,24 @@ import {
   useMap,
 } from 'react-leaflet';
 
+import {
+  collection,
+  doc,
+  getDoc,
+  getDocs,
+  onSnapshot,
+  serverTimestamp,
+  setDoc,
+  writeBatch,
+} from 'firebase/firestore';
+
+import { db } from './firebase';
+
 const RADIUS_M = 2000;
+const GAME_ID = 'tower-placement-demo';
 
 const PHASES = {
-  1: { title: 'Phase 1', subtitle: 'Map + grid', color: '#2563eb' },
+  1: { title: 'Phase 1', subtitle: 'Map only', color: '#2563eb' },
   2: { title: 'Phase 2', subtitle: '+ places', color: '#f97316' },
   3: { title: 'Phase 3', subtitle: '+ population', color: '#16a34a' },
 };
@@ -30,8 +44,27 @@ async function fetchJson(path) {
   return res.json();
 }
 
+function getOrCreateParticipantId() {
+  const key = 'towerPlacementParticipantId';
+  let id = localStorage.getItem(key);
+
+  if (!id) {
+    id =
+      typeof crypto !== 'undefined' && crypto.randomUUID
+        ? crypto.randomUUID()
+        : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+
+    localStorage.setItem(key, id);
+  }
+
+  return id;
+}
+
 function cloneTowers(towers) {
-  return towers.map((t) => ({ lat: Number(t.lat), lng: Number(t.lng) }));
+  return towers.map((tower) => ({
+    lat: Number(tower.lat),
+    lng: Number(tower.lng),
+  }));
 }
 
 function approximateDistanceSqMeters(aLat, aLng, bLat, bLng) {
@@ -54,6 +87,7 @@ function scorePhase(towers, populationPoints) {
 
     for (let j = 0; j < towers.length; j += 1) {
       const tower = towers[j];
+
       if (approximateDistanceSqMeters(tower.lat, tower.lng, lat, lng) <= r2) {
         covered = true;
         break;
@@ -70,7 +104,7 @@ function scorePhase(towers, populationPoints) {
 }
 
 function formatPopulation(value) {
-  return Math.round(value).toLocaleString('en-US');
+  return Math.round(value || 0).toLocaleString('en-US');
 }
 
 function formatPercent(value) {
@@ -94,10 +128,12 @@ function getGeoJsonCenter(boundary) {
 
   function walk(value) {
     if (!Array.isArray(value)) return;
+
     if (typeof value[0] === 'number' && typeof value[1] === 'number') {
       coords.push(value);
       return;
     }
+
     value.forEach(walk);
   }
 
@@ -125,6 +161,7 @@ function FitToBoundary({ boundary }) {
 
   useEffect(() => {
     if (!boundary) return;
+
     const layer = L.geoJSON(boundary);
     const bounds = layer.getBounds();
 
@@ -136,28 +173,33 @@ function FitToBoundary({ boundary }) {
   return null;
 }
 
-function MapPanes() {
-  const map = useMap();
+function JoinScreen({ nameInput, setNameInput, onJoin }) {
+  return (
+    <div className="join-screen">
+      <div className="join-card">
+        <p className="eyebrow">Tower placement challenge</p>
+        <h1>Enter your name</h1>
 
-  useEffect(() => {
-    const panes = [
-      ['landPane', 210],
-      ['populationPane', 260],
-      ['gridPane', 310],
-      ['placesPane', 360],
-      ['boundaryPane', 410],
-      ['coveragePane', 450],
-    ];
+        <p className="join-text">
+          Place five towers across three phases. Scores stay hidden until the end.
+        </p>
 
-    panes.forEach(([name, zIndex]) => {
-      if (!map.getPane(name)) {
-        map.createPane(name);
-      }
-      map.getPane(name).style.zIndex = zIndex;
-    });
-  }, [map]);
+        <form onSubmit={onJoin}>
+          <input
+            autoFocus
+            value={nameInput}
+            onChange={(event) => setNameInput(event.target.value)}
+            placeholder="Your name"
+            className="name-input"
+          />
 
-  return null;
+          <button className="primary-button full" type="submit">
+            Continue
+          </button>
+        </form>
+      </div>
+    </div>
+  );
 }
 
 function Tower({
@@ -186,6 +228,7 @@ function Tower({
   const handleMove = useCallback(
     (event) => {
       if (disabled || !onMove) return;
+
       const { lat, lng } = event.target.getLatLng();
       onMove(index, { lat, lng });
     },
@@ -210,6 +253,7 @@ function Tower({
       {showCoverage && (
         <Circle
           pane="coveragePane"
+          interactive={false}
           center={[tower.lat, tower.lng]}
           radius={RADIUS_M}
           pathOptions={{
@@ -223,9 +267,13 @@ function Tower({
       )}
 
       <Marker
+        pane="towerPane"
         position={[tower.lat, tower.lng]}
         icon={icon}
         draggable={!disabled}
+        zIndexOffset={1000 + index}
+        riseOnHover
+        riseOffset={1500}
         eventHandlers={{
           drag: handleDrag,
           dragend: handleMove,
@@ -252,12 +300,13 @@ function PlacesLayer({ places }) {
             pane="placesPane"
             key={feature.id ?? index}
             center={[lat, lng]}
-            radius={3.4}
+            radius={3.8}
+            interactive={false}
             pathOptions={{
               color: '#111827',
               weight: 0,
               fillColor: '#111827',
-              fillOpacity: 0.72,
+              fillOpacity: 0.78,
             }}
           />
         );
@@ -266,38 +315,35 @@ function PlacesLayer({ places }) {
   );
 }
 
-function ResultsPanel({ phaseTowers, populationPoints, totalPopulation, onReset }) {
-  const rows = useMemo(() => {
-    return [1, 2, 3].map((phaseNumber) => {
-      const score = scorePhase(phaseTowers[phaseNumber], populationPoints);
-      const pctTotal = totalPopulation ? (score.population / totalPopulation) * 100 : 0;
+function ResultsPanel({ myParticipant, totalPopulation }) {
+  const phases = myParticipant?.phases || {};
 
-      return {
-        phase: phaseNumber,
-        population: score.population,
-        pctTotal,
-      };
-    });
-  }, [phaseTowers, populationPoints, totalPopulation]);
+  const p1 = phases['1']?.population || 0;
+  const p2 = phases['2']?.population || 0;
+  const p3 = phases['3']?.population || 0;
 
-  const row1 = rows[0];
-  const row2 = rows[1];
-  const row3 = rows[2];
+  const row1 = {
+    population: p1,
+    pctTotal: totalPopulation ? (p1 / totalPopulation) * 100 : 0,
+  };
 
-  const phase1 = row1.population;
-  const phase2 = row2.population;
-  const phase3 = row3.population;
+  const row2 = {
+    population: p2,
+    pctTotal: totalPopulation ? (p2 / totalPopulation) * 100 : 0,
+  };
+
+  const row3 = {
+    population: p3,
+    pctTotal: totalPopulation ? (p3 / totalPopulation) * 100 : 0,
+  };
+
   return (
     <section className="results-panel" aria-label="Results comparison">
       <div className="results-header">
         <div>
           <p className="eyebrow">Final comparison</p>
-          <h1>Impact of better data</h1>
+          <h1>Your result</h1>
         </div>
-
-        <button className="ghost-button small" onClick={onReset}>
-          Reset
-        </button>
       </div>
 
       <div className="legend">
@@ -313,7 +359,7 @@ function ResultsPanel({ phaseTowers, populationPoints, totalPopulation, onReset 
         <h2>Phase 1</h2>
         <p>Population reached</p>
         <strong>
-          {formatPopulation(phase1)} <span>({formatShare(row1.pctTotal)})</span>
+          {formatPopulation(row1.population)} <span>({formatShare(row1.pctTotal)})</span>
         </strong>
       </div>
 
@@ -321,25 +367,172 @@ function ResultsPanel({ phaseTowers, populationPoints, totalPopulation, onReset 
         <h2>Phase 2</h2>
         <p>Population reached</p>
         <strong>
-          {formatPopulation(phase2)} <span>({formatShare(row2.pctTotal)})</span>
+          {formatPopulation(row2.population)} <span>({formatShare(row2.pctTotal)})</span>
         </strong>
-        <small>Increase over Phase 1: {formatPercent(percentIncrease(phase2, phase1))}</small>
+        <small>
+          Increase over Phase 1: {formatPercent(percentIncrease(row2.population, row1.population))}
+        </small>
       </div>
 
       <div className="result-block phase-3">
         <h2>Phase 3</h2>
         <p>Population reached</p>
         <strong>
-          {formatPopulation(phase3)} <span>({formatShare(row3.pctTotal)})</span>
+          {formatPopulation(row3.population)} <span>({formatShare(row3.pctTotal)})</span>
         </strong>
-        <small>Increase over Phase 1: {formatPercent(percentIncrease(phase3, phase1))}</small>
-        <small>Increase over Phase 2: {formatPercent(percentIncrease(phase3, phase2))}</small>
+        <small>
+          Increase over Phase 1: {formatPercent(percentIncrease(row3.population, row1.population))}
+        </small>
+        <small>
+          Increase over Phase 2: {formatPercent(percentIncrease(row3.population, row2.population))}
+        </small>
       </div>
 
       <p className="results-note">
         Coverage overlaps are counted only once. The score is the population inside the union of the five 2 km coverage areas.
       </p>
     </section>
+  );
+}
+
+function HostDashboard({
+  stage,
+  participants,
+  totalPopulation,
+  onStartGame,
+  onUnlockNext,
+  onEndGame,
+  busy,
+}) {
+  const isLobby = stage === 'lobby';
+  const isResults = stage === 'results';
+  const phase = isResults ? 3 : Math.max(1, Math.min(3, Number(stage) || 1));
+
+  const sortedParticipants = useMemo(() => {
+    return [...participants].sort((a, b) => {
+      const aScore = a.phases?.[String(phase)]?.population || 0;
+      const bScore = b.phases?.[String(phase)]?.population || 0;
+      return bScore - aScore;
+    });
+  }, [participants, phase]);
+
+  let primaryLabel = 'Start game';
+
+  if (!isLobby && !isResults) {
+    primaryLabel = phase < 3 ? `Unlock Phase ${phase + 1}` : 'Show final results';
+  }
+
+  if (isResults) {
+    primaryLabel = 'End game & clear data';
+  }
+
+  const handlePrimary = () => {
+    if (isLobby) {
+      onStartGame();
+      return;
+    }
+
+    if (isResults) {
+      onEndGame();
+      return;
+    }
+
+    onUnlockNext();
+  };
+
+  return (
+    <div className="host-screen">
+      <div className="modal-card host-card host-dashboard-card">
+        <div className="host-header">
+          <div>
+            <p className="eyebrow">Host dashboard</p>
+            <h2>
+              {isLobby && 'Lobby'}
+              {!isLobby && !isResults && `Phase ${phase}`}
+              {isResults && 'Final results'}
+            </h2>
+          </div>
+
+          <button className="primary-button small" onClick={handlePrimary} disabled={busy}>
+            {busy ? 'Updating…' : primaryLabel}
+          </button>
+        </div>
+
+        <p className="host-note">
+          {isLobby
+            ? 'Players can join now. Start the game when everyone is ready.'
+            : isResults
+              ? 'The game is finished. End the game to clear all saved participants and results.'
+              : 'Players cannot move to the next phase until you unlock it.'}
+        </p>
+
+        {!isLobby && !isResults && (
+          <button className="danger-button" onClick={onEndGame} disabled={busy}>
+            End game & clear data
+          </button>
+        )}
+
+        <div className="host-table-wrap">
+          <table className="host-table">
+            <thead>
+              <tr>
+                <th>Player</th>
+                <th>Phase 1</th>
+                <th>Phase 2</th>
+                <th>Phase 3</th>
+              </tr>
+            </thead>
+
+            <tbody>
+              {sortedParticipants.map((participant) => (
+                <tr key={participant.id}>
+                  <td>{participant.name || 'Anonymous'}</td>
+
+                  {[1, 2, 3].map((phaseNumber) => {
+                    const result = participant.phases?.[String(phaseNumber)];
+                    const pct =
+                      result?.population && totalPopulation
+                        ? (result.population / totalPopulation) * 100
+                        : 0;
+
+                    return (
+                      <td key={phaseNumber}>
+                        {result ? (
+                          <>
+                            {formatPopulation(result.population)}
+                            <span className="table-pct">({formatShare(pct)})</span>
+                          </>
+                        ) : (
+                          '—'
+                        )}
+                      </td>
+                    );
+                  })}
+                </tr>
+              ))}
+
+              {!sortedParticipants.length && (
+                <tr>
+                  <td colSpan="4">No players yet.</td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function WaitingPanel({ title, body }) {
+  return (
+    <div className="modal-backdrop waiting-backdrop" role="dialog" aria-modal="true">
+      <div className="modal-card waiting-card">
+        <p className="eyebrow">Please wait</p>
+        <h2>{title}</h2>
+        <p>{body}</p>
+      </div>
+    </div>
   );
 }
 
@@ -388,7 +581,6 @@ function PhaseInfoModal({ title, body, onClose }) {
 
 function MapLegend({ phase, showResults, phaseColor }) {
   const showPlaces = phase >= 2 || showResults;
-  const showPopulation = phase >= 3 || showResults;
 
   return (
     <div className={`map-legend ${showResults ? 'results-legend' : ''}`}>
@@ -399,11 +591,6 @@ function MapLegend({ phase, showResults, phaseColor }) {
         <span>Land area</span>
       </div>
 
-      <div className="map-legend-row">
-        <span className="legend-swatch grid-swatch" />
-        <span>Planning grid</span>
-      </div>
-
       {showPlaces && (
         <div className="map-legend-row">
           <span className="legend-swatch places-swatch" />
@@ -411,19 +598,9 @@ function MapLegend({ phase, showResults, phaseColor }) {
         </div>
       )}
 
-      {showPopulation && (
-        <div className="map-legend-row">
-          <span className="legend-swatch population-swatch" />
-          <span>Population density</span>
-        </div>
-      )}
-
       {!showResults && (
         <div className="map-legend-row">
-          <span
-            className="legend-swatch tower-swatch"
-            style={{ background: phaseColor }}
-          />
+          <span className="legend-swatch tower-swatch" style={{ background: phaseColor }} />
           <span>Towers · 2 km radius</span>
         </div>
       )}
@@ -431,26 +608,17 @@ function MapLegend({ phase, showResults, phaseColor }) {
       {showResults && (
         <>
           <div className="map-legend-row">
-            <span
-              className="legend-swatch tower-swatch"
-              style={{ background: PHASES[1].color }}
-            />
+            <span className="legend-swatch tower-swatch" style={{ background: PHASES[1].color }} />
             <span>Phase 1 towers</span>
           </div>
 
           <div className="map-legend-row">
-            <span
-              className="legend-swatch tower-swatch"
-              style={{ background: PHASES[2].color }}
-            />
+            <span className="legend-swatch tower-swatch" style={{ background: PHASES[2].color }} />
             <span>Phase 2 towers</span>
           </div>
 
           <div className="map-legend-row">
-            <span
-              className="legend-swatch tower-swatch"
-              style={{ background: PHASES[3].color }}
-            />
+            <span className="legend-swatch tower-swatch" style={{ background: PHASES[3].color }} />
             <span>Phase 3 towers</span>
           </div>
         </>
@@ -459,32 +627,64 @@ function MapLegend({ phase, showResults, phaseColor }) {
   );
 }
 
+function PopulationLegend({ visible }) {
+  if (!visible) return null;
+
+  return (
+    <div className="population-legend">
+      <div className="population-legend-title">Population density</div>
+
+      <div className="population-scale" />
+
+      <div className="population-scale-labels">
+        <span>Low</span>
+        <span>Medium</span>
+        <span>High</span>
+      </div>
+    </div>
+  );
+}
+
 export default function App() {
+  const [participantId] = useState(() => getOrCreateParticipantId());
+  const [nameInput, setNameInput] = useState(
+    () => localStorage.getItem('towerPlacementName') || ''
+  );
+  const [playerName, setPlayerName] = useState('');
   const [data, setData] = useState(null);
   const [loadError, setLoadError] = useState(null);
-  const [phase, setPhase] = useState(1);
   const [phaseTowers, setPhaseTowers] = useState(null);
-  const [locked, setLocked] = useState({ 1: false, 2: false, 3: false });
   const [showHelp, setShowHelp] = useState(true);
-  const [showResults, setShowResults] = useState(false);
   const [phaseMessage, setPhaseMessage] = useState(null);
+  const [gameState, setGameState] = useState({ stage: 'lobby' });
+  const [participants, setParticipants] = useState([]);
+  const [syncError, setSyncError] = useState(null);
+  const [busy, setBusy] = useState(false);
+
+  const previousPhaseRef = useRef(1);
+
+  const isHost = playerName.trim().toLowerCase() === 'santi';
+
+  const gameRef = useMemo(() => doc(db, 'games', GAME_ID), []);
+  const participantRef = useMemo(
+    () => doc(db, 'games', GAME_ID, 'participants', participantId),
+    [participantId]
+  );
 
   useEffect(() => {
     let alive = true;
 
     Promise.all([
-      fetchJson('data/grid.geojson'),
       fetchJson('data/places.geojson'),
       fetchJson('data/boundaries.geojson'),
       fetchJson('data/population_points.json'),
       fetchJson('data/population_meta.json'),
       fetchJson('data/default_towers.json'),
     ])
-      .then(([grid, places, boundary, populationPoints, populationMeta, defaultTowers]) => {
+      .then(([places, boundary, populationPoints, populationMeta, defaultTowers]) => {
         if (!alive) return;
 
         setData({
-          grid,
           places,
           boundary,
           populationPoints,
@@ -508,74 +708,298 @@ export default function App() {
     };
   }, []);
 
+  useEffect(() => {
+    if (!playerName) return undefined;
+
+    let cancelled = false;
+
+    async function connectGame() {
+      try {
+        const gameSnap = await getDoc(gameRef);
+
+        if (!gameSnap.exists()) {
+          await setDoc(gameRef, {
+            stage: 'lobby',
+            createdAt: serverTimestamp(),
+            updatedAt: serverTimestamp(),
+          });
+        }
+
+        if (!isHost) {
+          await setDoc(
+            participantRef,
+            {
+              id: participantId,
+              name: playerName,
+              isHost: false,
+              joinedAt: serverTimestamp(),
+              lastSeen: serverTimestamp(),
+            },
+            { merge: true }
+          );
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setSyncError(error.message || String(error));
+        }
+      }
+    }
+
+    connectGame();
+
+    const unsubGame = onSnapshot(
+      gameRef,
+      (snapshot) => {
+        if (!snapshot.exists()) {
+          setGameState({ stage: 'lobby' });
+          return;
+        }
+
+        setGameState(snapshot.data());
+      },
+      (error) => setSyncError(error.message || String(error))
+    );
+
+    const unsubParticipants = onSnapshot(
+      collection(db, 'games', GAME_ID, 'participants'),
+      (snapshot) => {
+        const rows = snapshot.docs.map((item) => ({
+          id: item.id,
+          ...item.data(),
+        }));
+
+        setParticipants(rows);
+      },
+      (error) => setSyncError(error.message || String(error))
+    );
+
+    return () => {
+      cancelled = true;
+      unsubGame();
+      unsubParticipants();
+    };
+  }, [gameRef, isHost, participantId, participantRef, playerName]);
+
+  const rawStage = gameState?.stage ?? 'lobby';
+  const isLobby = rawStage === 'lobby';
+  const showResults = rawStage === 'results';
+  const phase = showResults ? 3 : Math.max(1, Math.min(3, Number(rawStage) || 1));
+
+  const myParticipant = useMemo(
+    () => participants.find((participant) => participant.id === participantId),
+    [participants, participantId]
+  );
+
+  const hasSubmittedCurrentPhase = Boolean(myParticipant?.phases?.[String(phase)]);
+
+  useEffect(() => {
+    if (!playerName || showResults || isLobby || isHost) return;
+
+    if (phase !== previousPhaseRef.current) {
+      if (phase === 2) {
+        setPhaseMessage({
+          title: 'New data layer unlocked',
+          body: 'Places are now visible. These points reveal where settlements and relevant locations are, helping you make a more informed decision than with the map alone.',
+        });
+      }
+
+      if (phase === 3) {
+        setPhaseMessage({
+          title: 'Population layer unlocked',
+          body: 'Population density is now visible. This is the most important layer: it shows not only where places exist, but where people are actually concentrated.',
+        });
+      }
+
+      previousPhaseRef.current = phase;
+    }
+  }, [phase, playerName, showResults, isLobby, isHost]);
+
+  useEffect(() => {
+    if (!data || showResults || isLobby || phase <= 1 || isHost) return;
+
+    setPhaseTowers((current) => {
+      if (!current) return current;
+
+      const savedCurrent = myParticipant?.phases?.[String(phase)]?.towers;
+
+      if (savedCurrent) {
+        return {
+          ...current,
+          [phase]: cloneTowers(savedCurrent),
+        };
+      }
+
+      const previousSaved = myParticipant?.phases?.[String(phase - 1)]?.towers;
+      const startTowers = previousSaved || current[phase - 1] || data.defaultTowers;
+
+      return {
+        ...current,
+        [phase]: cloneTowers(startTowers),
+      };
+    });
+  }, [phase, data, myParticipant, showResults, isLobby, isHost]);
+
   const center = useMemo(
     () => (data?.boundary ? getGeoJsonCenter(data.boundary) : [38.98, 1.42]),
     [data]
   );
 
-  const pathRenderer = useMemo(() => L.canvas({ padding: 0.5 }), []);
-
   const updateTower = useCallback(
     (index, nextPosition) => {
-      if (locked[phase] || showResults) return;
+      if (hasSubmittedCurrentPhase || showResults || isLobby || isHost) return;
 
       setPhaseTowers((current) => ({
         ...current,
         [phase]: current[phase].map((tower, i) => (i === index ? nextPosition : tower)),
       }));
     },
-    [locked, phase, showResults]
+    [hasSubmittedCurrentPhase, phase, showResults, isLobby, isHost]
   );
 
-  const confirmPhase = useCallback(() => {
-    setLocked((current) => ({ ...current, [phase]: true }));
+  const submitPhase = useCallback(async () => {
+    if (!data || !phaseTowers || isHost || isLobby) return;
 
-    if (phase === 1) {
-      setPhaseTowers((current) => ({
-        ...current,
-        2: cloneTowers(current[1]),
-      }));
+    try {
+      setBusy(true);
 
-      setPhase(2);
-      setPhaseMessage({
-        title: 'New data layer unlocked',
-        body: 'Places are now visible. These points reveal where settlements and relevant locations are, helping you make a more informed decision than with the grid alone.',
-      });
-      return;
+      const towers = cloneTowers(phaseTowers[phase]);
+      const score = scorePhase(towers, data.populationPoints);
+
+      const pctTotal = data.populationMeta.total_population
+        ? (score.population / data.populationMeta.total_population) * 100
+        : 0;
+
+      await setDoc(
+        participantRef,
+        {
+          id: participantId,
+          name: playerName,
+          isHost: false,
+          lastUpdated: serverTimestamp(),
+          phases: {
+            [String(phase)]: {
+              towers,
+              population: score.population,
+              pctTotal,
+              coveredCells: score.coveredCells,
+              submittedAt: serverTimestamp(),
+            },
+          },
+        },
+        { merge: true }
+      );
+    } catch (error) {
+      setSyncError(error.message || String(error));
+    } finally {
+      setBusy(false);
     }
+  }, [
+    data,
+    isHost,
+    isLobby,
+    participantId,
+    participantRef,
+    phase,
+    phaseTowers,
+    playerName,
+  ]);
 
-    if (phase === 2) {
-      setPhaseTowers((current) => ({
-        ...current,
-        3: cloneTowers(current[2]),
-      }));
+  const startGame = useCallback(async () => {
+    if (!isHost) return;
 
-      setPhase(3);
-      setPhaseMessage({
-        title: 'Population layer unlocked',
-        body: 'Population density is now visible. This is the most important layer: it shows not only where places exist, but where people are actually concentrated.',
-      });
-      return;
+    try {
+      setBusy(true);
+
+      await setDoc(
+        gameRef,
+        {
+          stage: 1,
+          startedAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+          updatedBy: playerName,
+        },
+        { merge: true }
+      );
+    } catch (error) {
+      setSyncError(error.message || String(error));
+    } finally {
+      setBusy(false);
     }
+  }, [gameRef, isHost, playerName]);
 
-    setShowResults(true);
-  }, [phase]);
+  const unlockNextPhase = useCallback(async () => {
+    if (!isHost) return;
 
-  const reset = useCallback(() => {
-    if (!data?.defaultTowers) return;
+    try {
+      setBusy(true);
 
-    setPhase(1);
-    setLocked({ 1: false, 2: false, 3: false });
-    setShowResults(false);
-    setShowHelp(true);
-    setPhaseMessage(null);
+      const nextStage = phase < 3 ? phase + 1 : 'results';
 
-    setPhaseTowers({
-      1: cloneTowers(data.defaultTowers),
-      2: cloneTowers(data.defaultTowers),
-      3: cloneTowers(data.defaultTowers),
-    });
-  }, [data]);
+      await setDoc(
+        gameRef,
+        {
+          stage: nextStage,
+          updatedAt: serverTimestamp(),
+          updatedBy: playerName,
+        },
+        { merge: true }
+      );
+    } catch (error) {
+      setSyncError(error.message || String(error));
+    } finally {
+      setBusy(false);
+    }
+  }, [gameRef, isHost, phase, playerName]);
+
+  const endGameAndClearData = useCallback(async () => {
+    if (!isHost) return;
+
+    try {
+      setBusy(true);
+
+      const batch = writeBatch(db);
+      const participantsSnapshot = await getDocs(collection(db, 'games', GAME_ID, 'participants'));
+
+      participantsSnapshot.forEach((participantDoc) => {
+        batch.delete(participantDoc.ref);
+      });
+
+      batch.delete(gameRef);
+
+      await batch.commit();
+
+      setParticipants([]);
+      setGameState({ stage: 'lobby' });
+    } catch (error) {
+      setSyncError(error.message || String(error));
+    } finally {
+      setBusy(false);
+    }
+  }, [gameRef, isHost]);
+
+  const handleJoin = useCallback(
+    (event) => {
+      event.preventDefault();
+
+      const cleanName = nameInput.trim();
+
+      if (!cleanName) return;
+
+      localStorage.setItem('towerPlacementName', cleanName);
+      setPlayerName(cleanName);
+    },
+    [nameInput]
+  );
+
+  if (!playerName) {
+    return (
+      <JoinScreen
+        nameInput={nameInput}
+        setNameInput={setNameInput}
+        onJoin={handleJoin}
+      />
+    );
+  }
 
   if (loadError) {
     return (
@@ -595,9 +1019,41 @@ export default function App() {
     );
   }
 
+  if (isHost) {
+    return (
+      <>
+        <HostDashboard
+          stage={rawStage}
+          participants={participants}
+          totalPopulation={data.populationMeta.total_population}
+          onStartGame={startGame}
+          onUnlockNext={unlockNextPhase}
+          onEndGame={endGameAndClearData}
+          busy={busy}
+        />
+
+        {syncError && <div className="sync-error">{syncError}</div>}
+      </>
+    );
+  }
+
+  if (isLobby) {
+    return (
+      <main className="app-shell">
+        <WaitingPanel
+          title="Waiting for the game to start"
+          body="You have joined the game. The first phase will unlock automatically when the host starts."
+        />
+
+        {syncError && <div className="sync-error">{syncError}</div>}
+      </main>
+    );
+  }
+
   const currentTowers = phaseTowers[phase];
   const phaseInfo = PHASES[phase];
   const currentPhaseColor = PHASES[phase].color;
+  const showPopulation = phase >= 3 || showResults;
 
   return (
     <main className={`app-shell ${showResults ? 'results-mode' : ''}`}>
@@ -624,7 +1080,7 @@ export default function App() {
             />
           </Pane>
 
-          {(phase >= 3 || showResults) && (
+          {showPopulation && (
             <Pane name="populationPane" style={{ zIndex: 250 }}>
               <ImageOverlay
                 url={asset('data/pop_overlay.png')}
@@ -633,19 +1089,6 @@ export default function App() {
               />
             </Pane>
           )}
-
-          <Pane name="gridPane" style={{ zIndex: 300 }}>
-            <GeoJSON
-              key="grid"
-              data={data.grid}
-              style={{
-                color: '#64748b',
-                weight: 0.5,
-                fillColor: '#cbd5e1',
-                fillOpacity: 0.16,
-              }}
-            />
-          </Pane>
 
           {(phase >= 2 || showResults) && (
             <Pane name="placesPane" style={{ zIndex: 380 }}>
@@ -665,35 +1108,40 @@ export default function App() {
             />
           </Pane>
 
-          <Pane name="coveragePane" style={{ zIndex: 520 }}>
-            {!showResults &&
-              currentTowers.map((tower, index) => (
+          <Pane name="coveragePane" style={{ zIndex: 520 }} />
+          <Pane name="towerPane" style={{ zIndex: 650 }} />
+
+          {!showResults &&
+            currentTowers.map((tower, index) => (
+              <Tower
+                key={index}
+                tower={tower}
+                index={index}
+                color={currentPhaseColor}
+                phaseLabel={phaseInfo.title}
+                disabled={hasSubmittedCurrentPhase}
+                onMove={updateTower}
+              />
+            ))}
+
+          {showResults &&
+            [1, 2, 3].map((phaseNumber) => {
+              const towers =
+                myParticipant?.phases?.[String(phaseNumber)]?.towers ||
+                phaseTowers[phaseNumber];
+
+              return towers.map((tower, index) => (
                 <Tower
-                  key={index}
+                  key={`${phaseNumber}-${index}`}
                   tower={tower}
                   index={index}
-                  color={currentPhaseColor}
-                  phaseLabel={phaseInfo.title}
-                  disabled={locked[phase]}
-                  onMove={updateTower}
+                  color={PHASES[phaseNumber].color}
+                  phaseLabel={PHASES[phaseNumber].title}
+                  disabled
+                  faint={phaseNumber !== 3}
                 />
-              ))}
-
-            {showResults &&
-              [1, 2, 3].map((phaseNumber) =>
-                phaseTowers[phaseNumber].map((tower, index) => (
-                  <Tower
-                    key={`${phaseNumber}-${index}`}
-                    tower={tower}
-                    index={index}
-                    color={PHASES[phaseNumber].color}
-                    phaseLabel={PHASES[phaseNumber].title}
-                    disabled
-                    faint={phaseNumber !== 3}
-                  />
-                ))
-              )}
-          </Pane>
+              ));
+            })}
 
           <FitToBoundary boundary={data.boundary} />
         </MapContainer>
@@ -705,7 +1153,9 @@ export default function App() {
         phaseColor={currentPhaseColor}
       />
 
-      {!showResults && (
+      <PopulationLegend visible={showPopulation} />
+
+      {!showResults && !hasSubmittedCurrentPhase && (
         <>
           <div className="top-pill" style={{ '--phase-color': currentPhaseColor }}>
             <span className="phase-dot" />
@@ -721,19 +1171,16 @@ export default function App() {
             ?
           </button>
 
-          <div className="bottom-bar">
-            <button className="ghost-button small" onClick={reset}>
-              Reset
-            </button>
-
+          <div className="bottom-bar no-reset-bar">
             <div className="radius-pill">Fixed radius · 2 km</div>
 
             <button
               className="primary-button small"
               style={{ '--phase-color': currentPhaseColor }}
-              onClick={confirmPhase}
+              onClick={submitPhase}
+              disabled={busy}
             >
-              {phase < 3 ? 'Confirm phase' : 'Show results'}
+              {busy ? 'Saving…' : 'Submit phase'}
             </button>
           </div>
         </>
@@ -741,22 +1188,31 @@ export default function App() {
 
       {showResults && (
         <ResultsPanel
-          phaseTowers={phaseTowers}
-          populationPoints={data.populationPoints}
+          myParticipant={myParticipant}
           totalPopulation={data.populationMeta.total_population}
-          onReset={reset}
         />
       )}
 
-      {showHelp && !showResults && <HelpModal onClose={() => setShowHelp(false)} />}
+      {hasSubmittedCurrentPhase && !showResults && (
+        <WaitingPanel
+          title={`Phase ${phase} submitted`}
+          body="Your result has been saved. The next phase will unlock automatically when the host continues."
+        />
+      )}
 
-      {phaseMessage && !showResults && (
+      {showHelp && !showResults && !hasSubmittedCurrentPhase && (
+        <HelpModal onClose={() => setShowHelp(false)} />
+      )}
+
+      {phaseMessage && !showResults && !hasSubmittedCurrentPhase && (
         <PhaseInfoModal
           title={phaseMessage.title}
           body={phaseMessage.body}
           onClose={() => setPhaseMessage(null)}
         />
       )}
+
+      {syncError && <div className="sync-error">{syncError}</div>}
     </main>
   );
 }
