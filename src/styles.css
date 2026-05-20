@@ -170,6 +170,14 @@ textarea {
   grid-template-columns: 1fr auto;
 }
 
+.optimal-bar {
+  grid-template-columns: 1fr;
+}
+
+.optimal-bar .radius-pill {
+  color: #581c87;
+}
+
 .radius-pill {
   min-width: 0;
   text-align: center;
@@ -442,6 +450,11 @@ textarea {
 
 .result-block.phase-3 {
   border-left: 7px solid #16a34a;
+}
+
+.result-block.optimal-result {
+  border-left: 7px solid #9333ea;
+  background: #faf5ff;
 }
 
 .results-note {
@@ -976,16 +989,4 @@ textarea {
     width: 66px;
     height: 11px;
   }
-}
-.result-block.optimal-result {
-  border-left: 7px solid #9333ea;
-  background: #faf5ff;
-}
-
-.optimal-bar {
-  grid-template-columns: 1fr;
-}
-
-.optimal-bar .radius-pill {
-  color: #581c87;
 }

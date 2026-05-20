@@ -27,6 +27,7 @@ import { db } from './firebase';
 
 const RADIUS_M = 2000;
 const GAME_ID = 'tower-placement-demo';
+const HOST_NAME = 'santi123';
 
 const PHASES = {
   1: { title: 'Phase 1', subtitle: 'Map only', color: '#2563eb' },
@@ -104,7 +105,10 @@ function scorePhase(towers, populationPoints) {
   return { population, coveredCells };
 }
 
-function computeOptimalBenchmark(populationPoints) {
+function computeOptimalBenchmark(
+  populationPoints,
+  { candidateLimit = 350, scoringPointLimit = 2500 } = {}
+) {
   const validPoints = populationPoints
     .filter(([lat, lng, pop]) => Number.isFinite(lat) && Number.isFinite(lng) && pop > 0)
     .sort((a, b) => b[2] - a[2]);
@@ -118,13 +122,17 @@ function computeOptimalBenchmark(populationPoints) {
   }
 
   /*
-    This is a greedy max-coverage benchmark over the available population points.
-    It is not a continuous global mathematical optimum.
-    It is intentionally capped to keep the browser responsive during live demos.
+    Fast approximate benchmark:
+    - candidateLimit controls possible tower positions tested.
+    - scoringPointLimit controls population points used to choose towers.
+    - final score is still computed against the full population grid.
+
+    This is a benchmark, not a mathematical continuous global optimum.
   */
-  const candidateLimit = 1800;
   const candidates = validPoints.slice(0, candidateLimit);
-  const covered = new Uint8Array(populationPoints.length);
+  const scoringPoints = validPoints.slice(0, scoringPointLimit);
+
+  const covered = new Uint8Array(scoringPoints.length);
   const towers = [];
   const r2 = RADIUS_M * RADIUS_M;
 
@@ -136,11 +144,10 @@ function computeOptimalBenchmark(populationPoints) {
       const [candidateLat, candidateLng] = candidates[c];
       let gain = 0;
 
-      for (let i = 0; i < populationPoints.length; i += 1) {
+      for (let i = 0; i < scoringPoints.length; i += 1) {
         if (covered[i]) continue;
 
-        const [lat, lng, pop] = populationPoints[i];
-        if (pop <= 0) continue;
+        const [lat, lng, pop] = scoringPoints[i];
 
         if (approximateDistanceSqMeters(candidateLat, candidateLng, lat, lng) <= r2) {
           gain += pop;
@@ -158,10 +165,10 @@ function computeOptimalBenchmark(populationPoints) {
     const [bestLat, bestLng] = bestCandidate;
     towers.push({ lat: bestLat, lng: bestLng });
 
-    for (let i = 0; i < populationPoints.length; i += 1) {
+    for (let i = 0; i < scoringPoints.length; i += 1) {
       if (covered[i]) continue;
 
-      const [lat, lng] = populationPoints[i];
+      const [lat, lng] = scoringPoints[i];
 
       if (approximateDistanceSqMeters(bestLat, bestLng, lat, lng) <= r2) {
         covered[i] = 1;
@@ -769,7 +776,7 @@ function PhaseInfoModal({ title, body, onClose }) {
 }
 
 function MapLegend({ phase, showResults, phaseColor }) {
-  const showPlaces = phase >= 2 || showResults;
+  const showPlaces = phase === 2;
   const showOptimal = phase >= 4 || showResults;
 
   return (
@@ -865,7 +872,7 @@ export default function App() {
 
   const previousPhaseRef = useRef(1);
 
-  const isHost = playerName.trim().toLowerCase() === 'santi';
+  const isHost = playerName.trim().toLowerCase() === HOST_NAME;
 
   const gameRef = useMemo(() => doc(db, 'games', GAME_ID), []);
   const participantRef = useMemo(
@@ -909,18 +916,6 @@ export default function App() {
       alive = false;
     };
   }, []);
-
-  const optimalBenchmark = useMemo(() => {
-    if (!data?.populationPoints) {
-      return {
-        towers: [],
-        population: 0,
-        coveredCells: 0,
-      };
-    }
-
-    return computeOptimalBenchmark(data.populationPoints);
-  }, [data]);
 
   useEffect(() => {
     if (!playerName) return undefined;
@@ -999,6 +994,23 @@ export default function App() {
   const showResults = rawStage === 'results';
   const phase = showResults ? 4 : Math.max(1, Math.min(4, Number(rawStage) || 1));
 
+  const shouldComputeBenchmark = !isLobby && (phase >= 4 || showResults);
+
+  const optimalBenchmark = useMemo(() => {
+    if (!shouldComputeBenchmark || !data?.populationPoints) {
+      return {
+        towers: [],
+        population: 0,
+        coveredCells: 0,
+      };
+    }
+
+    return computeOptimalBenchmark(data.populationPoints, {
+      candidateLimit: 350,
+      scoringPointLimit: 2500,
+    });
+  }, [data, shouldComputeBenchmark]);
+
   const myParticipant = useMemo(
     () => participants.find((participant) => participant.id === participantId),
     [participants, participantId]
@@ -1021,7 +1033,7 @@ export default function App() {
       if (phase === 3) {
         setPhaseMessage({
           title: 'Population layer unlocked',
-          body: 'Population density is now visible. This is the most important layer: it shows not only where places exist, but where people are actually concentrated.',
+          body: 'Population density is now visible. This is the most important layer: it shows where people are actually concentrated.',
         });
       }
 
@@ -1313,7 +1325,7 @@ export default function App() {
             </Pane>
           )}
 
-          {(phase >= 2 || showResults) && (
+          {phase === 2 && (
             <Pane name="placesPane" style={{ zIndex: 380 }}>
               <PlacesLayer places={data.places} />
             </Pane>
