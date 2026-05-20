@@ -483,11 +483,6 @@ function ResultsPanel({ myParticipant, participants, totalPopulation, optimalBen
         </small>
         <small>Difference from benchmark: {formatGapToBenchmark(row3.population, optimalPopulation)}</small>
       </div>
-
-      <p className="results-note">
-        Coverage overlaps are counted only once. The benchmark is precomputed over the available population grid.
-      </p>
-
       <GlobalLeaderboard
         participants={participants}
         totalPopulation={totalPopulation}
