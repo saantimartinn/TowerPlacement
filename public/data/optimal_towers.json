@@ -1,0 +1,31 @@
+{
+  "method": "precomputed greedy max-coverage benchmark",
+  "radius_m": 2000,
+  "candidate_limit": 2500,
+  "scoring_point_limit": 12000,
+  "towers": [
+    {
+      "lat": 38.9120835,
+      "lng": 1.4245826
+    },
+    {
+      "lat": 38.9720835,
+      "lng": 1.3045826
+    },
+    {
+      "lat": 38.8929168,
+      "lng": 1.3904159
+    },
+    {
+      "lat": 38.9862502,
+      "lng": 1.5337493
+    },
+    {
+      "lat": 38.9270835,
+      "lng": 1.4529159
+    }
+  ],
+  "population": 109094.76699999975,
+  "coveredCells": 7429,
+  "generatedAt": "2026-05-20T08:51:29.603Z"
+}
