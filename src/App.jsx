@@ -32,6 +32,7 @@ const PHASES = {
   1: { title: 'Phase 1', subtitle: 'Map only', color: '#2563eb' },
   2: { title: 'Phase 2', subtitle: '+ places', color: '#f97316' },
   3: { title: 'Phase 3', subtitle: '+ population', color: '#16a34a' },
+  4: { title: 'Phase 4', subtitle: 'Optimal benchmark', color: '#9333ea' },
 };
 
 function asset(path) {
@@ -103,6 +104,87 @@ function scorePhase(towers, populationPoints) {
   return { population, coveredCells };
 }
 
+function computeOptimalBenchmark(populationPoints) {
+  const validPoints = populationPoints
+    .filter(([lat, lng, pop]) => Number.isFinite(lat) && Number.isFinite(lng) && pop > 0)
+    .sort((a, b) => b[2] - a[2]);
+
+  if (!validPoints.length) {
+    return {
+      towers: [],
+      population: 0,
+      coveredCells: 0,
+    };
+  }
+
+  /*
+    This is a greedy max-coverage benchmark over the available population points.
+    It is not a continuous global mathematical optimum.
+    It is intentionally capped to keep the browser responsive during live demos.
+  */
+  const candidateLimit = 1800;
+  const candidates = validPoints.slice(0, candidateLimit);
+  const covered = new Uint8Array(populationPoints.length);
+  const towers = [];
+  const r2 = RADIUS_M * RADIUS_M;
+
+  for (let towerIndex = 0; towerIndex < 5; towerIndex += 1) {
+    let bestCandidate = null;
+    let bestGain = -1;
+
+    for (let c = 0; c < candidates.length; c += 1) {
+      const [candidateLat, candidateLng] = candidates[c];
+      let gain = 0;
+
+      for (let i = 0; i < populationPoints.length; i += 1) {
+        if (covered[i]) continue;
+
+        const [lat, lng, pop] = populationPoints[i];
+        if (pop <= 0) continue;
+
+        if (approximateDistanceSqMeters(candidateLat, candidateLng, lat, lng) <= r2) {
+          gain += pop;
+        }
+      }
+
+      if (gain > bestGain) {
+        bestGain = gain;
+        bestCandidate = candidates[c];
+      }
+    }
+
+    if (!bestCandidate || bestGain <= 0) break;
+
+    const [bestLat, bestLng] = bestCandidate;
+    towers.push({ lat: bestLat, lng: bestLng });
+
+    for (let i = 0; i < populationPoints.length; i += 1) {
+      if (covered[i]) continue;
+
+      const [lat, lng] = populationPoints[i];
+
+      if (approximateDistanceSqMeters(bestLat, bestLng, lat, lng) <= r2) {
+        covered[i] = 1;
+      }
+    }
+  }
+
+  while (towers.length < 5 && validPoints[towers.length]) {
+    towers.push({
+      lat: validPoints[towers.length][0],
+      lng: validPoints[towers.length][1],
+    });
+  }
+
+  const score = scorePhase(towers, populationPoints);
+
+  return {
+    towers,
+    population: score.population,
+    coveredCells: score.coveredCells,
+  };
+}
+
 function formatPopulation(value) {
   return Math.round(value || 0).toLocaleString('en-US');
 }
@@ -121,6 +203,19 @@ function formatShare(value) {
 function percentIncrease(current, baseline) {
   if (!baseline || baseline <= 0) return Number.NaN;
   return ((current - baseline) / baseline) * 100;
+}
+
+function formatGapToBenchmark(population, benchmarkPopulation) {
+  if (!benchmarkPopulation || benchmarkPopulation <= 0) return 'N/A';
+
+  const diff = benchmarkPopulation - population;
+  const pct = Math.abs(diff / benchmarkPopulation) * 100;
+
+  if (diff >= 0) {
+    return `${formatPopulation(diff)} below benchmark (${formatShare(pct)})`;
+  }
+
+  return `${formatPopulation(Math.abs(diff))} above benchmark (${formatShare(pct)})`;
 }
 
 function getGeoJsonCenter(boundary) {
@@ -379,12 +474,13 @@ function GlobalLeaderboard({ participants, totalPopulation, phase, title = 'Glob
   );
 }
 
-function ResultsPanel({ myParticipant, participants, totalPopulation }) {
+function ResultsPanel({ myParticipant, participants, totalPopulation, optimalBenchmark }) {
   const phases = myParticipant?.phases || {};
 
   const p1 = phases['1']?.population || 0;
   const p2 = phases['2']?.population || 0;
   const p3 = phases['3']?.population || 0;
+  const optimalPopulation = optimalBenchmark?.population || 0;
 
   const row1 = {
     population: p1,
@@ -401,6 +497,11 @@ function ResultsPanel({ myParticipant, participants, totalPopulation }) {
     pctTotal: totalPopulation ? (p3 / totalPopulation) * 100 : 0,
   };
 
+  const optimalRow = {
+    population: optimalPopulation,
+    pctTotal: totalPopulation ? (optimalPopulation / totalPopulation) * 100 : 0,
+  };
+
   return (
     <section className="results-panel" aria-label="Results comparison">
       <div className="results-header">
@@ -411,12 +512,20 @@ function ResultsPanel({ myParticipant, participants, totalPopulation }) {
       </div>
 
       <div className="legend">
-        {[1, 2, 3].map((phaseNumber) => (
+        {[1, 2, 3, 4].map((phaseNumber) => (
           <div className="legend-item" key={phaseNumber}>
             <span className="legend-dot" style={{ background: PHASES[phaseNumber].color }} />
             <strong>{PHASES[phaseNumber].title}</strong>
           </div>
         ))}
+      </div>
+
+      <div className="result-block optimal-result">
+        <h2>Optimal benchmark</h2>
+        <p>Population reached</p>
+        <strong>
+          {formatPopulation(optimalRow.population)} <span>({formatShare(optimalRow.pctTotal)})</span>
+        </strong>
       </div>
 
       <div className="result-block phase-1">
@@ -425,6 +534,7 @@ function ResultsPanel({ myParticipant, participants, totalPopulation }) {
         <strong>
           {formatPopulation(row1.population)} <span>({formatShare(row1.pctTotal)})</span>
         </strong>
+        <small>Difference from benchmark: {formatGapToBenchmark(row1.population, optimalPopulation)}</small>
       </div>
 
       <div className="result-block phase-2">
@@ -436,6 +546,7 @@ function ResultsPanel({ myParticipant, participants, totalPopulation }) {
         <small>
           Increase over Phase 1: {formatPercent(percentIncrease(row2.population, row1.population))}
         </small>
+        <small>Difference from benchmark: {formatGapToBenchmark(row2.population, optimalPopulation)}</small>
       </div>
 
       <div className="result-block phase-3">
@@ -450,7 +561,13 @@ function ResultsPanel({ myParticipant, participants, totalPopulation }) {
         <small>
           Increase over Phase 2: {formatPercent(percentIncrease(row3.population, row2.population))}
         </small>
+        <small>Difference from benchmark: {formatGapToBenchmark(row3.population, optimalPopulation)}</small>
       </div>
+
+      <p className="results-note">
+        Coverage overlaps are counted only once. The benchmark is computed over the available population grid.
+      </p>
+
       <GlobalLeaderboard
         participants={participants}
         totalPopulation={totalPopulation}
@@ -472,20 +589,22 @@ function HostDashboard({
 }) {
   const isLobby = stage === 'lobby';
   const isResults = stage === 'results';
-  const phase = isResults ? 3 : Math.max(1, Math.min(3, Number(stage) || 1));
+  const phase = isResults ? 4 : Math.max(1, Math.min(4, Number(stage) || 1));
+
+  const rankingPhase = phase > 3 ? 3 : phase;
 
   const sortedParticipants = useMemo(() => {
     return [...participants].sort((a, b) => {
-      const aScore = a.phases?.[String(phase)]?.population || 0;
-      const bScore = b.phases?.[String(phase)]?.population || 0;
+      const aScore = a.phases?.[String(rankingPhase)]?.population || 0;
+      const bScore = b.phases?.[String(rankingPhase)]?.population || 0;
       return bScore - aScore;
     });
-  }, [participants, phase]);
+  }, [participants, rankingPhase]);
 
   let primaryLabel = 'Start game';
 
   if (!isLobby && !isResults) {
-    primaryLabel = phase < 3 ? `Unlock Phase ${phase + 1}` : 'Show final results';
+    primaryLabel = phase < 4 ? `Unlock Phase ${phase + 1}` : 'Show final results';
   }
 
   if (isResults) {
@@ -529,7 +648,9 @@ function HostDashboard({
             ? 'Players can join now. Start the game when everyone is ready.'
             : isResults
               ? 'The game is finished. End the game to clear all saved participants and results.'
-              : 'Players cannot move to the next phase until you unlock it.'}
+              : phase === 4
+                ? 'The benchmark solution is visible to players. Move to final results when ready.'
+                : 'Players cannot move to the next phase until you unlock it.'}
         </p>
 
         {!isLobby && !isResults && (
@@ -649,6 +770,7 @@ function PhaseInfoModal({ title, body, onClose }) {
 
 function MapLegend({ phase, showResults, phaseColor }) {
   const showPlaces = phase >= 2 || showResults;
+  const showOptimal = phase >= 4 || showResults;
 
   return (
     <div className={`map-legend ${showResults ? 'results-legend' : ''}`}>
@@ -666,10 +788,17 @@ function MapLegend({ phase, showResults, phaseColor }) {
         </div>
       )}
 
-      {!showResults && (
+      {!showResults && phase < 4 && (
         <div className="map-legend-row">
           <span className="legend-swatch tower-swatch" style={{ background: phaseColor }} />
           <span>Towers · 2 km radius</span>
+        </div>
+      )}
+
+      {showOptimal && (
+        <div className="map-legend-row">
+          <span className="legend-swatch tower-swatch" style={{ background: PHASES[4].color }} />
+          <span>Optimal benchmark</span>
         </div>
       )}
 
@@ -736,7 +865,7 @@ export default function App() {
 
   const previousPhaseRef = useRef(1);
 
-  const isHost = playerName.trim().toLowerCase() === 'santi123';
+  const isHost = playerName.trim().toLowerCase() === 'santi';
 
   const gameRef = useMemo(() => doc(db, 'games', GAME_ID), []);
   const participantRef = useMemo(
@@ -780,6 +909,18 @@ export default function App() {
       alive = false;
     };
   }, []);
+
+  const optimalBenchmark = useMemo(() => {
+    if (!data?.populationPoints) {
+      return {
+        towers: [],
+        population: 0,
+        coveredCells: 0,
+      };
+    }
+
+    return computeOptimalBenchmark(data.populationPoints);
+  }, [data]);
 
   useEffect(() => {
     if (!playerName) return undefined;
@@ -856,14 +997,15 @@ export default function App() {
   const rawStage = gameState?.stage ?? 'lobby';
   const isLobby = rawStage === 'lobby';
   const showResults = rawStage === 'results';
-  const phase = showResults ? 3 : Math.max(1, Math.min(3, Number(rawStage) || 1));
+  const phase = showResults ? 4 : Math.max(1, Math.min(4, Number(rawStage) || 1));
 
   const myParticipant = useMemo(
     () => participants.find((participant) => participant.id === participantId),
     [participants, participantId]
   );
 
-  const hasSubmittedCurrentPhase = Boolean(myParticipant?.phases?.[String(phase)]);
+  const hasSubmittedCurrentPhase =
+    phase <= 3 && Boolean(myParticipant?.phases?.[String(phase)]);
 
   useEffect(() => {
     if (!playerName || showResults || isLobby || isHost) return;
@@ -883,12 +1025,19 @@ export default function App() {
         });
       }
 
+      if (phase === 4) {
+        setPhaseMessage({
+          title: 'Optimal benchmark revealed',
+          body: 'The benchmark solution is now visible. It shows where the five towers should be placed to maximise population reached over the available population grid.',
+        });
+      }
+
       previousPhaseRef.current = phase;
     }
   }, [phase, playerName, showResults, isLobby, isHost]);
 
   useEffect(() => {
-    if (!data || showResults || isLobby || phase <= 1 || isHost) return;
+    if (!data || showResults || isLobby || phase <= 1 || phase > 3 || isHost) return;
 
     setPhaseTowers((current) => {
       if (!current) return current;
@@ -919,7 +1068,7 @@ export default function App() {
 
   const updateTower = useCallback(
     (index, nextPosition) => {
-      if (hasSubmittedCurrentPhase || showResults || isLobby || isHost) return;
+      if (hasSubmittedCurrentPhase || showResults || isLobby || isHost || phase > 3) return;
 
       setPhaseTowers((current) => ({
         ...current,
@@ -930,7 +1079,7 @@ export default function App() {
   );
 
   const submitPhase = useCallback(async () => {
-    if (!data || !phaseTowers || isHost || isLobby) return;
+    if (!data || !phaseTowers || isHost || isLobby || phase > 3) return;
 
     try {
       setBusy(true);
@@ -1006,7 +1155,7 @@ export default function App() {
     try {
       setBusy(true);
 
-      const nextStage = phase < 3 ? phase + 1 : 'results';
+      const nextStage = phase < 4 ? phase + 1 : 'results';
 
       await setDoc(
         gameRef,
@@ -1123,7 +1272,8 @@ export default function App() {
     );
   }
 
-  const currentTowers = phaseTowers[phase];
+  const isOptimalPhase = phase === 4 && !showResults;
+  const currentTowers = phase <= 3 ? phaseTowers[phase] : optimalBenchmark.towers;
   const phaseInfo = PHASES[phase];
   const currentPhaseColor = PHASES[phase].color;
   const showPopulation = phase >= 3 || showResults;
@@ -1192,8 +1342,8 @@ export default function App() {
                 index={index}
                 color={currentPhaseColor}
                 phaseLabel={phaseInfo.title}
-                disabled={hasSubmittedCurrentPhase}
-                onMove={updateTower}
+                disabled={hasSubmittedCurrentPhase || isOptimalPhase}
+                onMove={isOptimalPhase ? undefined : updateTower}
               />
             ))}
 
@@ -1216,6 +1366,18 @@ export default function App() {
               ));
             })}
 
+          {showResults &&
+            optimalBenchmark.towers.map((tower, index) => (
+              <Tower
+                key={`optimal-${index}`}
+                tower={tower}
+                index={index}
+                color={PHASES[4].color}
+                phaseLabel="Optimal benchmark"
+                disabled
+              />
+            ))}
+
           <FitToBoundary boundary={data.boundary} />
         </MapContainer>
       </div>
@@ -1228,7 +1390,7 @@ export default function App() {
 
       <PopulationLegend visible={showPopulation} />
 
-      {!showResults && !hasSubmittedCurrentPhase && (
+      {!showResults && !hasSubmittedCurrentPhase && !isOptimalPhase && (
         <>
           <div className="top-pill" style={{ '--phase-color': currentPhaseColor }}>
             <span className="phase-dot" />
@@ -1259,11 +1421,28 @@ export default function App() {
         </>
       )}
 
+      {isOptimalPhase && (
+        <>
+          <div className="top-pill" style={{ '--phase-color': currentPhaseColor }}>
+            <span className="phase-dot" />
+            <strong>{phaseInfo.title}</strong>
+            <span>{phaseInfo.subtitle}</span>
+          </div>
+
+          <div className="bottom-bar optimal-bar">
+            <div className="radius-pill">
+              Optimal benchmark · waiting for final results
+            </div>
+          </div>
+        </>
+      )}
+
       {showResults && (
         <ResultsPanel
           myParticipant={myParticipant}
           participants={participants}
           totalPopulation={data.populationMeta.total_population}
+          optimalBenchmark={optimalBenchmark}
         />
       )}
 
@@ -1281,7 +1460,7 @@ export default function App() {
         </WaitingPanel>
       )}
 
-      {showHelp && !showResults && !hasSubmittedCurrentPhase && (
+      {showHelp && !showResults && !hasSubmittedCurrentPhase && !isOptimalPhase && (
         <HelpModal onClose={() => setShowHelp(false)} />
       )}
 

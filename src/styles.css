@@ -977,3 +977,15 @@ textarea {
     height: 11px;
   }
 }
+.result-block.optimal-result {
+  border-left: 7px solid #9333ea;
+  background: #faf5ff;
+}
+
+.optimal-bar {
+  grid-template-columns: 1fr;
+}
+
+.optimal-bar .radius-pill {
+  color: #581c87;
+}
