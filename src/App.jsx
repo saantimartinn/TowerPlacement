@@ -105,93 +105,6 @@ function scorePhase(towers, populationPoints) {
   return { population, coveredCells };
 }
 
-function computeOptimalBenchmark(
-  populationPoints,
-  { candidateLimit = 350, scoringPointLimit = 2500 } = {}
-) {
-  const validPoints = populationPoints
-    .filter(([lat, lng, pop]) => Number.isFinite(lat) && Number.isFinite(lng) && pop > 0)
-    .sort((a, b) => b[2] - a[2]);
-
-  if (!validPoints.length) {
-    return {
-      towers: [],
-      population: 0,
-      coveredCells: 0,
-    };
-  }
-
-  /*
-    Fast approximate benchmark:
-    - candidateLimit controls possible tower positions tested.
-    - scoringPointLimit controls population points used to choose towers.
-    - final score is still computed against the full population grid.
-
-    This is a benchmark, not a mathematical continuous global optimum.
-  */
-  const candidates = validPoints.slice(0, candidateLimit);
-  const scoringPoints = validPoints.slice(0, scoringPointLimit);
-
-  const covered = new Uint8Array(scoringPoints.length);
-  const towers = [];
-  const r2 = RADIUS_M * RADIUS_M;
-
-  for (let towerIndex = 0; towerIndex < 5; towerIndex += 1) {
-    let bestCandidate = null;
-    let bestGain = -1;
-
-    for (let c = 0; c < candidates.length; c += 1) {
-      const [candidateLat, candidateLng] = candidates[c];
-      let gain = 0;
-
-      for (let i = 0; i < scoringPoints.length; i += 1) {
-        if (covered[i]) continue;
-
-        const [lat, lng, pop] = scoringPoints[i];
-
-        if (approximateDistanceSqMeters(candidateLat, candidateLng, lat, lng) <= r2) {
-          gain += pop;
-        }
-      }
-
-      if (gain > bestGain) {
-        bestGain = gain;
-        bestCandidate = candidates[c];
-      }
-    }
-
-    if (!bestCandidate || bestGain <= 0) break;
-
-    const [bestLat, bestLng] = bestCandidate;
-    towers.push({ lat: bestLat, lng: bestLng });
-
-    for (let i = 0; i < scoringPoints.length; i += 1) {
-      if (covered[i]) continue;
-
-      const [lat, lng] = scoringPoints[i];
-
-      if (approximateDistanceSqMeters(bestLat, bestLng, lat, lng) <= r2) {
-        covered[i] = 1;
-      }
-    }
-  }
-
-  while (towers.length < 5 && validPoints[towers.length]) {
-    towers.push({
-      lat: validPoints[towers.length][0],
-      lng: validPoints[towers.length][1],
-    });
-  }
-
-  const score = scorePhase(towers, populationPoints);
-
-  return {
-    towers,
-    population: score.population,
-    coveredCells: score.coveredCells,
-  };
-}
-
 function formatPopulation(value) {
   return Math.round(value || 0).toLocaleString('en-US');
 }
@@ -572,7 +485,7 @@ function ResultsPanel({ myParticipant, participants, totalPopulation, optimalBen
       </div>
 
       <p className="results-note">
-        Coverage overlaps are counted only once. The benchmark is computed over the available population grid.
+        Coverage overlaps are counted only once. The benchmark is precomputed over the available population grid.
       </p>
 
       <GlobalLeaderboard
@@ -597,7 +510,6 @@ function HostDashboard({
   const isLobby = stage === 'lobby';
   const isResults = stage === 'results';
   const phase = isResults ? 4 : Math.max(1, Math.min(4, Number(stage) || 1));
-
   const rankingPhase = phase > 3 ? 3 : phase;
 
   const sortedParticipants = useMemo(() => {
@@ -889,24 +801,35 @@ export default function App() {
       fetchJson('data/population_points.json'),
       fetchJson('data/population_meta.json'),
       fetchJson('data/default_towers.json'),
+      fetchJson('data/optimal_towers.json'),
     ])
-      .then(([places, boundary, populationPoints, populationMeta, defaultTowers]) => {
-        if (!alive) return;
-
-        setData({
+      .then(
+        ([
           places,
           boundary,
           populationPoints,
           populationMeta,
           defaultTowers,
-        });
+          optimalBenchmark,
+        ]) => {
+          if (!alive) return;
 
-        setPhaseTowers({
-          1: cloneTowers(defaultTowers),
-          2: cloneTowers(defaultTowers),
-          3: cloneTowers(defaultTowers),
-        });
-      })
+          setData({
+            places,
+            boundary,
+            populationPoints,
+            populationMeta,
+            defaultTowers,
+            optimalBenchmark,
+          });
+
+          setPhaseTowers({
+            1: cloneTowers(defaultTowers),
+            2: cloneTowers(defaultTowers),
+            3: cloneTowers(defaultTowers),
+          });
+        }
+      )
       .catch((error) => {
         if (!alive) return;
         setLoadError(error.message || String(error));
@@ -994,22 +917,11 @@ export default function App() {
   const showResults = rawStage === 'results';
   const phase = showResults ? 4 : Math.max(1, Math.min(4, Number(rawStage) || 1));
 
-  const shouldComputeBenchmark = !isLobby && (phase >= 4 || showResults);
-
-  const optimalBenchmark = useMemo(() => {
-    if (!shouldComputeBenchmark || !data?.populationPoints) {
-      return {
-        towers: [],
-        population: 0,
-        coveredCells: 0,
-      };
-    }
-
-    return computeOptimalBenchmark(data.populationPoints, {
-      candidateLimit: 350,
-      scoringPointLimit: 2500,
-    });
-  }, [data, shouldComputeBenchmark]);
+  const optimalBenchmark = data?.optimalBenchmark || {
+    towers: [],
+    population: 0,
+    coveredCells: 0,
+  };
 
   const myParticipant = useMemo(
     () => participants.find((participant) => participant.id === participantId),
@@ -1040,7 +952,7 @@ export default function App() {
       if (phase === 4) {
         setPhaseMessage({
           title: 'Optimal benchmark revealed',
-          body: 'The benchmark solution is now visible. It shows where the five towers should be placed to maximise population reached over the available population grid.',
+          body: 'The benchmark solution is now visible. It shows the five precomputed tower locations that maximise the benchmark score over the available population grid.',
         });
       }
 
