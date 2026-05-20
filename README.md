@@ -1,38 +1,32 @@
-# Tower Decision React
+# Tower Placement Game
 
-App React + Leaflet para colocar 5 torres con radio fijo de 2 km en tres fases de información.
+React + Leaflet application for a participatory tower placement activity.
 
-## Ejecutar en Windows PowerShell
+Players place 5 towers with a fixed 2 km coverage radius across several information phases. The goal is to show how data availability changes the quality of decision-making.
 
-```powershell
-cd tower_decision_react
-npm config set registry https://registry.npmjs.org/
-npm install
-npm run dev
-```
+## Game phases
 
-Después abre la URL que muestra Vite. Para usarla desde el móvil, móvil y ordenador deben estar en la misma WiFi. Normalmente será algo como:
+1. **Phase 1 — Map only**  
+   The player only sees the base map.
+
+2. **Phase 2 — Places**  
+   Place/location points become visible.
+
+3. **Phase 3 — Population**  
+   The population density layer becomes visible. Places are no longer shown in this phase.
+
+4. **Phase 4 — Optimal benchmark**  
+   A precomputed benchmark solution is shown. It cannot be moved.
+
+5. **Final results**  
+   The player sees their results, the global ranking, and the difference compared with the benchmark.
+
+## Multiplayer mode
+
+The app uses **Firebase Firestore** to synchronize the game across multiple devices.
+
+- Players enter their name.
+- The host enters using the name:
 
 ```text
-http://192.168.x.x:5173/
-```
-
-## Si npm install falla
-
-1. Cierra VS Code y cualquier terminal que esté usando la carpeta.
-2. Borra `node_modules` y `package-lock.json`.
-3. Ejecuta:
-
-```powershell
-npm cache clean --force
-npm config set registry https://registry.npmjs.org/
-npm install --registry=https://registry.npmjs.org/
-```
-
-Si estás trabajando dentro de OneDrive y aparece `EPERM`, mueve la carpeta a una ruta local tipo `C:\dev\tower_decision_react`.
-
-## Build
-
-```powershell
-npm run build
-```
+Santi123
