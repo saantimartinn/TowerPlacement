@@ -302,7 +302,7 @@ function Tower({
   );
 }
 
-function PlacesLayer({ places }) {
+function PlacesLayer({ places, faded = false }) {
   return (
     <>
       {places.features?.map((feature, index) => {
@@ -315,13 +315,13 @@ function PlacesLayer({ places }) {
             pane="placesPane"
             key={feature.id ?? index}
             center={[lat, lng]}
-            radius={3.8}
+            radius={faded ? 3.2 : 3.8}
             interactive={false}
             pathOptions={{
               color: '#111827',
               weight: 0,
               fillColor: '#111827',
-              fillOpacity: 0.78,
+              fillOpacity: faded ? 0.32 : 0.78,
             }}
           />
         );
@@ -1232,9 +1232,12 @@ export default function App() {
             </Pane>
           )}
 
-          {phase === 2 && (
+          {(phase >= 2 || showResults) && (
             <Pane name="placesPane" style={{ zIndex: 380 }}>
-              <PlacesLayer places={data.places} />
+              <PlacesLayer
+                places={data.places}
+                faded={phase >= 3 || showResults}
+              />
             </Pane>
           )}
 
