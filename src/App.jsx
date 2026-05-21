@@ -738,6 +738,24 @@ function MapLegend({ phase, showResults, phaseColor }) {
   );
 }
 
+function IslandStats() {
+  return (
+    <div className="island-stats">
+      <div className="island-stats-title">Island statistics</div>
+
+      <div className="island-stats-row">
+        <span>Population count</span>
+        <strong>165,400 people</strong>
+      </div>
+
+      <div className="island-stats-row">
+        <span>Island area</span>
+        <strong>572 km²</strong>
+      </div>
+    </div>
+  );
+}
+
 function PopulationLegend({ visible }) {
   if (!visible) return null;
 
@@ -1310,6 +1328,8 @@ export default function App() {
         phaseColor={currentPhaseColor}
       />
 
+      <IslandStats />
+      
       <PopulationLegend visible={showPopulation} />
 
       {!showResults && !hasSubmittedCurrentPhase && !isOptimalPhase && (
