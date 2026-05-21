@@ -31,7 +31,7 @@ const HOST_NAME = 'santi123';
 
 const PHASES = {
   1: { title: 'Phase 1', subtitle: 'Map only', color: '#2563eb' },
-  2: { title: 'Phase 2', subtitle: '+ places', color: '#f97316' },
+  2: { title: 'Phase 2', subtitle: '+ Settlement centers', color: '#f97316' },
   3: { title: 'Phase 3', subtitle: '+ population', color: '#16a34a' },
   4: { title: 'Phase 4', subtitle: 'Optimal benchmark', color: '#9333ea' },
 };
