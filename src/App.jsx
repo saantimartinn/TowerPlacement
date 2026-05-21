@@ -689,7 +689,7 @@ function MapLegend({ phase, showResults, phaseColor }) {
       {showPlaces && (
         <div className="map-legend-row">
           <span className="legend-swatch places-swatch" />
-          <span>Places</span>
+          <span>Settlement centers</span>
         </div>
       )}
 
