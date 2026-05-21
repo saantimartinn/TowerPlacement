@@ -646,18 +646,9 @@ function HelpModal({ onClose }) {
         <div className="modal-title">Instructions</div>
 
         <p>
-          Drag the <strong>5 towers</strong> on the map. Each circle shows a fixed{' '}
-          <strong>2 km</strong> coverage radius.
+          Drag the <strong>5 towers</strong> on the map. Each circle represents{' '}
+          a fixed coverage radius.
         </p>
-
-        <p>
-          Confirm each phase. First you decide with limited information, then places appear, and finally population data is revealed.
-        </p>
-
-        <p className="muted">
-          The score is hidden until the end to avoid biasing the decision.
-        </p>
-
         <button className="primary-button full" onClick={onClose}>
           Got it
         </button>
@@ -720,17 +711,17 @@ function MapLegend({ phase, showResults, phaseColor }) {
         <>
           <div className="map-legend-row">
             <span className="legend-swatch tower-swatch" style={{ background: PHASES[1].color }} />
-            <span>Phase 1 towers</span>
+            <span>Phase 1 - Island area</span>
           </div>
 
           <div className="map-legend-row">
             <span className="legend-swatch tower-swatch" style={{ background: PHASES[2].color }} />
-            <span>Phase 2 towers</span>
+            <span>Phase 2 - Settlements</span>
           </div>
 
           <div className="map-legend-row">
             <span className="legend-swatch tower-swatch" style={{ background: PHASES[3].color }} />
-            <span>Phase 3 towers</span>
+            <span>Phase 3 - Population</span>
           </div>
         </>
       )}
@@ -951,21 +942,21 @@ export default function App() {
       if (phase === 2) {
         setPhaseMessage({
           title: 'New data layer unlocked',
-          body: 'Places are now visible. These points reveal where settlements and relevant locations are, helping you make a more informed decision than with the map alone.',
+          body: 'This layer displays settlement centers (villages, towns, cities, and districts).',
         });
       }
 
       if (phase === 3) {
         setPhaseMessage({
           title: 'Population layer unlocked',
-          body: 'Population density is now visible. This is the most important layer: it shows where people are actually concentrated.',
+          body: 'This layer displays populated areas',
         });
       }
 
       if (phase === 4) {
         setPhaseMessage({
           title: 'Optimal benchmark revealed',
-          body: 'The benchmark solution is now visible. It shows the five precomputed tower locations that maximise the benchmark score over the available population grid.',
+          body: 'This benchmark shows precomputed tower locations that maximize population coverage.',
         });
       }
 
@@ -1329,7 +1320,7 @@ export default function App() {
       />
 
       <IslandStats />
-      
+
       <PopulationLegend visible={showPopulation} />
 
       {!showResults && !hasSubmittedCurrentPhase && !isOptimalPhase && (
