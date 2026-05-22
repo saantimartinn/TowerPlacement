@@ -503,6 +503,7 @@ function ResultsPanel({ myParticipant, participants, totalPopulation, optimalBen
         </small>
         <small>Difference from benchmark: {formatGapToBenchmark(row3.population, optimalPopulation)}</small>
       </div>
+
       <GlobalLeaderboard
         participants={participants}
         totalPopulation={totalPopulation}
@@ -533,14 +534,14 @@ function HostDashboard({
       const bScore = b.phases?.[String(rankingPhase)]?.population || 0;
       return bScore - aScore;
     });
-
-    const phaseAverages = useMemo(() => {
-      return [1, 2, 3].reduce((acc, phaseNumber) => {
-        acc[phaseNumber] = getPhaseAverage(participants, phaseNumber, totalPopulation);
-        return acc;
-      }, {});
-    }, [participants, totalPopulation]);
   }, [participants, rankingPhase]);
+
+  const phaseAverages = useMemo(() => {
+    return [1, 2, 3].reduce((acc, phaseNumber) => {
+      acc[phaseNumber] = getPhaseAverage(participants, phaseNumber, totalPopulation);
+      return acc;
+    }, {});
+  }, [participants, totalPopulation]);
 
   let primaryLabel = 'Start game';
 
@@ -725,7 +726,7 @@ function PhaseInfoModal({ title, body, onClose }) {
 }
 
 function MapLegend({ phase, showResults, phaseColor }) {
-  const showPlaces = phase === 2;
+  const showPlaces = phase >= 2 || showResults;
   const showOptimal = phase >= 4 || showResults;
 
   return (
