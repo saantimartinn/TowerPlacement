@@ -120,6 +120,26 @@ function formatShare(value) {
   return `${value.toFixed(1)}%`;
 }
 
+function getPhaseAverage(participants, phaseNumber, totalPopulation) {
+  const submittedResults = participants
+    .map((participant) => participant.phases?.[String(phaseNumber)])
+    .filter((result) => result && Number.isFinite(Number(result.population)));
+
+  if (!submittedResults.length) return null;
+
+  const avgPopulation =
+    submittedResults.reduce((sum, result) => sum + Number(result.population || 0), 0) /
+    submittedResults.length;
+
+  const avgPctTotal = totalPopulation ? (avgPopulation / totalPopulation) * 100 : 0;
+
+  return {
+    population: avgPopulation,
+    pctTotal: avgPctTotal,
+    count: submittedResults.length,
+  };
+}
+
 function percentIncrease(current, baseline) {
   if (!baseline || baseline <= 0) return Number.NaN;
   return ((current - baseline) / baseline) * 100;
@@ -513,6 +533,13 @@ function HostDashboard({
       const bScore = b.phases?.[String(rankingPhase)]?.population || 0;
       return bScore - aScore;
     });
+
+    const phaseAverages = useMemo(() => {
+      return [1, 2, 3].reduce((acc, phaseNumber) => {
+        acc[phaseNumber] = getPhaseAverage(participants, phaseNumber, totalPopulation);
+        return acc;
+      }, {});
+    }, [participants, totalPopulation]);
   }, [participants, rankingPhase]);
 
   let primaryLabel = 'Start game';
@@ -611,6 +638,30 @@ function HostDashboard({
                   })}
                 </tr>
               ))}
+
+              {sortedParticipants.length > 0 && (
+                <tr className="host-average-row">
+                  <td>Average</td>
+
+                  {[1, 2, 3].map((phaseNumber) => {
+                    const average = phaseAverages[phaseNumber];
+
+                    return (
+                      <td key={phaseNumber}>
+                        {average ? (
+                          <>
+                            {formatPopulation(average.population)}
+                            <span className="table-pct">({formatShare(average.pctTotal)})</span>
+                            <span className="table-count">n={average.count}</span>
+                          </>
+                        ) : (
+                          '—'
+                        )}
+                      </td>
+                    );
+                  })}
+                </tr>
+              )}
 
               {!sortedParticipants.length && (
                 <tr>
