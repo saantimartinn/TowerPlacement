@@ -839,6 +839,8 @@ export default function App() {
   const [busy, setBusy] = useState(false);
 
   const previousPhaseRef = useRef(1);
+  const initializedPhasesRef = useRef(new Set());
+  const myParticipantRef = useRef(null);
 
   const isHost = playerName.trim().toLowerCase() === HOST_NAME;
 
@@ -984,6 +986,17 @@ export default function App() {
     [participants, participantId]
   );
 
+  useEffect(() => {
+    myParticipantRef.current = myParticipant || null;
+  }, [myParticipant]);
+
+  useEffect(() => {
+    if (isLobby || phase === 1) {
+      initializedPhasesRef.current = new Set();
+      previousPhaseRef.current = 1;
+    }
+  }, [isLobby, phase]);
+
   const hasSubmittedCurrentPhase =
     phase <= 3 && Boolean(myParticipant?.phases?.[String(phase)]);
 
@@ -1017,12 +1030,21 @@ export default function App() {
   }, [phase, playerName, showResults, isLobby, isHost]);
 
   useEffect(() => {
-    if (!data || showResults || isLobby || phase <= 1 || phase > 3 || isHost) return;
+    if (!data || !phaseTowers || showResults || isLobby || phase <= 1 || phase > 3 || isHost) {
+      return;
+    }
+
+    if (initializedPhasesRef.current.has(phase)) {
+      return;
+    }
+
+    initializedPhasesRef.current.add(phase);
 
     setPhaseTowers((current) => {
       if (!current) return current;
 
-      const savedCurrent = myParticipant?.phases?.[String(phase)]?.towers;
+      const latestParticipant = myParticipantRef.current;
+      const savedCurrent = latestParticipant?.phases?.[String(phase)]?.towers;
 
       if (savedCurrent) {
         return {
@@ -1031,7 +1053,7 @@ export default function App() {
         };
       }
 
-      const previousSaved = myParticipant?.phases?.[String(phase - 1)]?.towers;
+      const previousSaved = latestParticipant?.phases?.[String(phase - 1)]?.towers;
       const startTowers = previousSaved || current[phase - 1] || data.defaultTowers;
 
       return {
@@ -1039,7 +1061,7 @@ export default function App() {
         [phase]: cloneTowers(startTowers),
       };
     });
-  }, [phase, data, myParticipant, showResults, isLobby, isHost]);
+  }, [phase, data, phaseTowers, showResults, isLobby, isHost]);
 
   const center = useMemo(
     () => (data?.boundary ? getGeoJsonCenter(data.boundary) : [38.98, 1.42]),
@@ -1170,6 +1192,8 @@ export default function App() {
 
       await batch.commit();
 
+      initializedPhasesRef.current = new Set();
+      previousPhaseRef.current = 1;
       setParticipants([]);
       setGameState({ stage: 'lobby' });
     } catch (error) {
